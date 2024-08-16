@@ -5,7 +5,6 @@ from unittest.mock import MagicMock, call, patch
 from uuid import UUID
 
 import pytest
-from sqlalchemy import not_
 from sqlalchemy.orm.attributes import InstrumentedAttribute
 
 from annotation.database import Base
@@ -390,24 +389,25 @@ def test_get_job_attributes_for_post(
             )
 
 
-# does not work. Not sure how to return from query a
-# MagicMock that would then change the results
-@pytest.mark.skip(reason="Does not work")
 def test_recalculate_file_pages(files: File):
     mock_session = MagicMock()
     mock_result = MagicMock()
-    mock_session.query().filter().all.return_value = mock_result
+    mock_session.query().filter.return_value = mock_result
     expected_validating_pages = [5, 7]
     expected_annotating_pages = [3, 5, 6, 7]
-    mock_result.filter(
-        not_(ManualAnnotationTask.is_validation)
-    ).all.return_value = [[5, 6, 7], [3, 6]]
-    mock_result.filter(ManualAnnotationTask.is_validation).all.return_value = [
-        [5, 7]
-    ]
+
+    def filter_side_effect(*args):
+        if "NOT" in str(args[0]):
+            return MagicMock(
+                all=MagicMock(return_value=[([5, 6, 7],), ([3, 6],)])
+            )
+        else:
+            return MagicMock(all=MagicMock(return_value=[([5, 7],)]))
+
+    mock_result.filter.side_effect = filter_side_effect
     recalculate_file_pages(mock_session, files)
-    assert files.distributed_annotating_pages == expected_annotating_pages
     assert files.distributed_validating_pages == expected_validating_pages
+    assert files.distributed_annotating_pages == expected_annotating_pages
 
 
 def test_read_user(job_annotators: Tuple[User]):
