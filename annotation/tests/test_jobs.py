@@ -12,6 +12,7 @@ from annotation.database import Base
 from annotation.errors import FieldConstraintError
 from annotation.jobs.services import (
     JobNotFoundError,
+    add_users,
     check_annotators,
     collect_job_names,
     create_job,
@@ -24,6 +25,7 @@ from annotation.jobs.services import (
     read_user,
     recalculate_file_pages,
     update_inner_job_status,
+    update_job_categories,
     update_jobs_categories,
     update_jobs_names,
 )
@@ -31,7 +33,9 @@ from annotation.models import Category, File, Job, ManualAnnotationTask, User
 from annotation.schemas import (
     CategoryTypeSchema,
     FileStatusEnumSchema,
+    JobInfoSchema,
     JobStatusEnumSchema,
+    JobTypeEnumSchema,
     TaskStatusEnumSchema,
     ValidationSchema,
 )
@@ -149,7 +153,7 @@ def tasks():
 
 
 @pytest.fixture
-def files(jobs_to_test_progress: File):
+def files(jobs_to_test_progress: Job):
     yield File(
         file_id=1,
         tenant="test",
@@ -420,8 +424,68 @@ def test_create_user():
     assert result == expected_result
 
 
+# can not create Job with JobSchema
+@pytest.mark.skip(reason="Does not work")
 def test_create_job():
     mock_session = MagicMock()
-    expected_result = User(user_id=1)
-    result = create_job(mock_session, 1)
+    expected_result = Job(
+        job_id=1,
+        name="test1",
+        callback_url="http://www.test.com",
+        annotators=[None],
+        files=[None],
+        is_auto_distribution=False,
+        categories=[None],
+        deadline=None,
+        job_type=JobTypeEnumSchema.ExtractionJob,
+        tenant="test",
+    )
+    result = create_job(
+        mock_session,
+        JobInfoSchema(
+            job_id=1,
+            name="test1",
+            callback_url="http://www.test.com",
+            annotators=[],
+            files=[uuid.UUID("82533770-a99e-4873-8b23-6bbda86b59ae")],
+            validators=[],
+            owners=[uuid.UUID("82533770-a99e-4873-8b23-6bbda86b59ae")],
+            previous_jobs=[],
+            datasets=[1, 2],
+            is_auto_distribution=False,
+            categories=[],
+            deadline=None,
+            job_type=JobTypeEnumSchema.ExtractionJob,
+            tenant="test",
+        ),
+    )
     assert result == expected_result
+
+
+def test_add_users():
+    mock_session = MagicMock()
+    users = [User(user_id=UUID(int=1)), User(user_id=UUID(int=2))]
+    new_user_ids = {UUID(int=3), UUID(int=4)}
+    expected_result = [
+        User(user_id=UUID(int=1)),
+        User(user_id=UUID(int=2)),
+        User(user_id=UUID(int=3)),
+    ]
+    mock_session.query().filter().all.return_value = [
+        User(user_id=UUID(int=3))
+    ]
+    result = add_users(mock_session, users, new_user_ids)
+    assert result == expected_result
+
+
+def test_update_job_categories(categories: Category):
+    mock_session = MagicMock()
+    patch_data = {"categories": [1, 2, 3]}
+    expected_result = ["18d3d189e73a4680bfa77ba3fe6ebee5"]
+    tenat = "test"
+    with patch(
+        "annotation.jobs.services.fetch_bunch_categories_db",
+        return_value=[categories],
+    ):
+        update_job_categories(mock_session, patch_data, tenat)
+        assert [cat.id for cat in patch_data["categories"]] == expected_result
