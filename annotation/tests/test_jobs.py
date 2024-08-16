@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy.orm.attributes import InstrumentedAttribute
 
 from annotation.database import Base
-from annotation.errors import FieldConstraintError
+from annotation.errors import FieldConstraintError, WrongJobError
 from annotation.jobs.services import (
     JobNotFoundError,
     add_users,
@@ -16,6 +16,8 @@ from annotation.jobs.services import (
     collect_job_names,
     create_job,
     create_user,
+    find_users,
+    get_job,
     get_job_attributes_for_post,
     get_jobs_by_files,
     get_jobs_by_name,
@@ -23,6 +25,7 @@ from annotation.jobs.services import (
     get_tasks_to_delete,
     read_user,
     recalculate_file_pages,
+    update_files,
     update_inner_job_status,
     update_job_categories,
     update_job_files,
@@ -163,6 +166,8 @@ def files(jobs_to_test_progress: Job):
             job_id=1,
             pages_number=100,
             status=FileStatusEnumSchema.pending,
+            distributed_validating_pages=[],
+            distributed_annotating_pages=[],
         ),
         File(
             file_id=2,
@@ -170,6 +175,8 @@ def files(jobs_to_test_progress: Job):
             job_id=1,
             pages_number=150,
             status=FileStatusEnumSchema.pending,
+            distributed_validating_pages=[],
+            distributed_annotating_pages=[],
         ),
     )
 
@@ -594,3 +601,48 @@ def test_update_user_overall_load(tasks: Tuple[ManualAnnotationTask]):
     update_user_overall_load(mock_session, UUID(int=1))
     assert mock_user.overall_load == 3
     mock_session.add.assert_called_once_with(mock_user)
+
+
+def test_find_users():
+    mock_session = MagicMock()
+    expected_saved_users = [User(user_id=UUID(int=1))]
+    expected_new_users = [User(user_id=UUID(int=2))]
+    mock_session.query().filter().all.return_value = [
+        User(user_id=UUID(int=1))
+    ]
+    result_saved_users, result_new_users = find_users(
+        mock_session, set((UUID(int=1), UUID(int=2)))
+    )
+    assert result_saved_users == expected_saved_users
+    assert result_new_users == expected_new_users
+
+
+@pytest.mark.parametrize(
+    ("mock_query",), ((Job(job_id=1, tenant="tenant"),), (None,))
+)
+def test_get_job(mock_query: Union[Job, None]):
+    mock_session = MagicMock()
+    mock_session.query().filter_by().first.return_value = mock_query
+    if not mock_query:
+        with pytest.raises(WrongJobError):
+            get_job(mock_session, 1, "tenant")
+    else:
+        result = get_job(mock_session, 1, "tenant")
+        expected_result = Job(job_id=1, tenant="tenant")
+        assert result == expected_result
+
+
+# why are tasks in this function dict
+def test_update_files(files: Tuple[File]):
+    mock_session = MagicMock()
+    mock_session.query().filter().with_for_update().all.return_value = [
+        files[0],
+        files[1],
+    ]
+    tasks = [
+        {"file_id": 1, "is_validation": True, "pages": [1, 2, 3]},
+        {"file_id": 2, "is_validation": False, "pages": [4, 5, 6]},
+    ]
+    update_files(mock_session, tasks, 1)
+    assert files[0].distributed_validating_pages == [1, 2, 3]
+    assert files[1].distributed_annotating_pages == [4, 5, 6]
