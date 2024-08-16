@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, call, patch
 from uuid import UUID
 
 import pytest
+from sqlalchemy import not_
 from sqlalchemy.orm.attributes import InstrumentedAttribute
 
 from annotation.database import Base
@@ -13,11 +14,15 @@ from annotation.jobs.services import (
     JobNotFoundError,
     check_annotators,
     collect_job_names,
+    create_job,
+    create_user,
     get_job_attributes_for_post,
     get_jobs_by_files,
     get_jobs_by_name,
     get_pages_in_work,
     get_tasks_to_delete,
+    read_user,
+    recalculate_file_pages,
     update_inner_job_status,
     update_jobs_categories,
     update_jobs_names,
@@ -144,13 +149,15 @@ def tasks():
 
 
 @pytest.fixture
-def files(jobs_to_test_progress: Job):
+def files(jobs_to_test_progress: File):
     yield File(
         file_id=1,
         tenant="test",
         job_id=jobs_to_test_progress[0].job_id,
         pages_number=5,
         status=FileStatusEnumSchema.pending,
+        distributed_annotating_pages=[],
+        distributed_validating_pages=[],
     )
 
 
@@ -377,3 +384,44 @@ def test_get_job_attributes_for_post(
             get_job_attributes_for_post(
                 mock_session, job_id, "test", attributes
             )
+
+
+# does not work. Not sure how to return from query a
+# MagicMock that would then change the results
+@pytest.mark.skip(reason="Does not work")
+def test_recalculate_file_pages(files: File):
+    mock_session = MagicMock()
+    mock_result = MagicMock()
+    mock_session.query().filter().all.return_value = mock_result
+    expected_validating_pages = [5, 7]
+    expected_annotating_pages = [3, 5, 6, 7]
+    mock_result.filter(
+        not_(ManualAnnotationTask.is_validation)
+    ).all.return_value = [[5, 6, 7], [3, 6]]
+    mock_result.filter(ManualAnnotationTask.is_validation).all.return_value = [
+        [5, 7]
+    ]
+    recalculate_file_pages(mock_session, files)
+    assert files.distributed_annotating_pages == expected_annotating_pages
+    assert files.distributed_validating_pages == expected_validating_pages
+
+
+def test_read_user(job_annotators: Tuple[User]):
+    mock_session = MagicMock()
+    mock_session.query().get.return_value = job_annotators[0]
+    result = read_user(mock_session, job_annotators[0])
+    assert result == job_annotators[0]
+
+
+def test_create_user():
+    mock_session = MagicMock()
+    expected_result = User(user_id=1)
+    result = create_user(mock_session, 1)
+    assert result == expected_result
+
+
+def test_create_job():
+    mock_session = MagicMock()
+    expected_result = User(user_id=1)
+    result = create_job(mock_session, 1)
+    assert result == expected_result
