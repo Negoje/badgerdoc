@@ -1,3 +1,4 @@
+import unittest
 import uuid
 from collections import namedtuple
 from typing import Any, Set, Tuple, Union
@@ -16,6 +17,8 @@ from annotation.jobs.services import (
     collect_job_names,
     create_job,
     create_user,
+    delete_tasks,
+    find_saved_users,
     find_users,
     get_job,
     get_job_attributes_for_post,
@@ -646,3 +649,87 @@ def test_update_files(files: Tuple[File]):
     update_files(mock_session, tasks, 1)
     assert files[0].distributed_validating_pages == [1, 2, 3]
     assert files[1].distributed_annotating_pages == [4, 5, 6]
+
+
+def test_delete_tasks(tasks: Tuple[ManualAnnotationTask], files: Tuple[File]):
+    mock_session = MagicMock()
+    mock_session.query().filter().with_for_update().first.return_value = files[
+        0
+    ]
+    expected_delete_calls = [
+        unittest.mock.call(tasks[0]),
+        unittest.mock.call(tasks[5]),
+    ]
+
+    expected_recalculate_calls = files[0]
+    expected_user_load_calls = [
+        unittest.mock.call(mock_session, tasks[0].user_id),
+        unittest.mock.call(mock_session, tasks[5].user_id),
+    ]
+    with patch(
+        "annotation.jobs.services.recalculate_file_pages"
+    ) as mock_recalculate_file_pages, patch(
+        "annotation.jobs.services.update_user_overall_load"
+    ) as mock_update_user_overall_load:
+        delete_tasks(mock_session, {tasks[0], tasks[5]})
+        mock_session.delete.assert_has_calls(
+            expected_delete_calls, any_order=True
+        )
+        mock_recalculate_file_pages.assert_called_with(
+            mock_session, expected_recalculate_calls
+        )
+        mock_update_user_overall_load.assert_has_calls(
+            expected_user_load_calls, any_order=True
+        )
+
+
+@pytest.mark.parametrize(
+    (
+        "new_validators",
+        "new_annotators",
+        "job_validators",
+        "job_annotators",
+        "expected_annotators",
+        "expected_validators",
+    ),
+    (
+        (
+            {UUID(int=1), UUID(int=2)},
+            {UUID(int=3)},
+            (User(user_id=UUID(int=1)), User(user_id=UUID(int=2))),
+            (User(user_id=UUID(int=3)), User(user_id=UUID(int=4))),
+            {UUID(int=4)},
+            set(),
+        ),
+        (
+            {UUID(int=3)},
+            {UUID(int=2), UUID(int=1)},
+            (User(user_id=UUID(int=4)), User(user_id=UUID(int=3))),
+            (User(user_id=UUID(int=2)), User(user_id=UUID(int=1))),
+            set(),
+            {UUID(int=4)},
+        ),
+    ),
+)
+def test_find_saved_users(
+    new_validators: Set[UUID],
+    new_annotators: Set[UUID],
+    job_validators: Tuple[User],
+    job_annotators: Tuple[User],
+    expected_annotators: Set[UUID],
+    expected_validators: Set[UUID],
+):
+    mock_session = MagicMock()
+
+    mock_job = MagicMock()
+    mock_job.validators = job_validators
+    mock_job.annotators = job_annotators
+    with patch(
+        "annotation.jobs.services.delete_tasks_for_removed_users",
+        return_value=[ManualAnnotationTask(user_id=UUID(int=4))],
+    ):
+        result_annotators, result_validators = find_saved_users(
+            mock_session, mock_job, new_annotators, new_validators
+        )
+        assert result_validators == expected_validators
+        assert result_annotators == expected_annotators
