@@ -25,8 +25,11 @@ from annotation.jobs.services import (
     recalculate_file_pages,
     update_inner_job_status,
     update_job_categories,
+    update_job_files,
     update_jobs_categories,
     update_jobs_names,
+    update_user_overall_load,
+    validate_job_extensive_coverage,
 )
 from annotation.models import Category, File, Job, ManualAnnotationTask, User
 from annotation.schemas import (
@@ -153,14 +156,21 @@ def tasks():
 
 @pytest.fixture
 def files(jobs_to_test_progress: Job):
-    yield File(
-        file_id=1,
-        tenant="test",
-        job_id=jobs_to_test_progress[0].job_id,
-        pages_number=5,
-        status=FileStatusEnumSchema.pending,
-        distributed_annotating_pages=[],
-        distributed_validating_pages=[],
+    yield (
+        File(
+            file_id=1,
+            tenant="tenant",
+            job_id=1,
+            pages_number=100,
+            status=FileStatusEnumSchema.pending,
+        ),
+        File(
+            file_id=2,
+            tenant="tenant",
+            job_id=1,
+            pages_number=150,
+            status=FileStatusEnumSchema.pending,
+        ),
     )
 
 
@@ -389,7 +399,7 @@ def test_get_job_attributes_for_post(
             )
 
 
-def test_recalculate_file_pages(files: File):
+def test_recalculate_file_pages(files: Tuple[File]):
     mock_session = MagicMock()
     mock_result = MagicMock()
     mock_session.query().filter.return_value = mock_result
@@ -405,9 +415,9 @@ def test_recalculate_file_pages(files: File):
             return MagicMock(all=MagicMock(return_value=[([5, 7],)]))
 
     mock_result.filter.side_effect = filter_side_effect
-    recalculate_file_pages(mock_session, files)
-    assert files.distributed_validating_pages == expected_validating_pages
-    assert files.distributed_annotating_pages == expected_annotating_pages
+    recalculate_file_pages(mock_session, files[0])
+    assert files[0].distributed_validating_pages == expected_validating_pages
+    assert files[0].distributed_annotating_pages == expected_annotating_pages
 
 
 def test_read_user(job_annotators: Tuple[User]):
@@ -489,3 +499,98 @@ def test_update_job_categories(categories: Category):
     ):
         update_job_categories(mock_session, patch_data, tenat)
         assert [cat.id for cat in patch_data["categories"]] == expected_result
+
+
+@pytest.mark.parametrize(
+    ("patch_data", "job"),
+    (
+        (
+            {
+                "extensive_coverage": 1,
+                "annotators": [
+                    User(user_id=UUID(int=1)),
+                    User(user_id=UUID(int=2)),
+                ],
+            },
+            Job(
+                annotators=[
+                    User(user_id=UUID(int=3)),
+                    User(user_id=UUID(int=4)),
+                ]
+            ),
+        ),
+        (
+            {"extensive_coverage": 1, "annotators": []},
+            Job(
+                annotators=[
+                    User(user_id=UUID(int=3)),
+                    User(user_id=UUID(int=4)),
+                ]
+            ),
+        ),
+        (
+            {
+                "extensive_coverage": 5,
+                "annotators": [
+                    User(user_id=UUID(int=1)),
+                    User(user_id=UUID(int=2)),
+                ],
+            },
+            Job(
+                annotators=[
+                    User(user_id=UUID(int=3)),
+                    User(user_id=UUID(int=4)),
+                ]
+            ),
+        ),
+        (
+            {"extensive_coverage": 5, "annotators": []},
+            Job(
+                annotators=[
+                    User(user_id=UUID(int=3)),
+                    User(user_id=UUID(int=4)),
+                ]
+            ),
+        ),
+    ),
+)
+def test_validate_job_extensive_coverage(patch_data: dict, job: Job):
+    if patch_data.get("extensive_coverage") == 5:
+        with pytest.raises(FieldConstraintError):
+            validate_job_extensive_coverage(patch_data, job)
+    else:
+        pass
+
+
+def test_update_job_files(files: Tuple[File]):
+    mock_session = MagicMock()
+    patch_data = {"files": {1, 2}, "datasets": {"dataset1"}}
+
+    expected_calls = [files[0], files[1]]
+
+    with patch(
+        "annotation.jobs.services.get_files_info",
+        return_value=[
+            {"file_id": 1, "pages_number": 100},
+            {"file_id": 2, "pages_number": 150},
+        ],
+    ):
+        update_job_files(mock_session, patch_data, 1, "tenant", "token")
+        mock_session.add_all.assert_called_once_with(expected_calls)
+        mock_session.query().filter_by.assert_called_once_with(job_id=1)
+        mock_session.query().filter_by().delete.assert_called_once()
+
+
+def test_update_user_overall_load(tasks: Tuple[ManualAnnotationTask]):
+    mock_session = MagicMock()
+    mock_user = User(user_id=UUID(int=1))
+    mock_session.query().filter().all.return_value = (
+        tasks[0],
+        tasks[1],
+        tasks[2],
+        tasks[3],
+    )
+    mock_session.query().get.return_value = mock_user
+    update_user_overall_load(mock_session, UUID(int=1))
+    assert mock_user.overall_load == 3
+    mock_session.add.assert_called_once_with(mock_user)
