@@ -34,6 +34,7 @@ from annotation.jobs.services import (
     update_job_files,
     update_jobs_categories,
     update_jobs_names,
+    update_jobs_users,
     update_user_overall_load,
     validate_job_extensive_coverage,
 )
@@ -733,3 +734,87 @@ def test_find_saved_users(
         )
         assert result_validators == expected_validators
         assert result_annotators == expected_annotators
+
+
+@pytest.mark.parametrize(
+    (
+        "patch_data",
+        "is_manual",
+        "expected_deleted",
+        "expected_annotators",
+        "expected_validators",
+    ),
+    (
+        (
+            {
+                "annotators": [UUID(int=5)],
+                "validators": [UUID(int=6)],
+                "owners": {UUID(int=7)},
+            },
+            True,
+            {UUID(int=1), UUID(int=2), UUID(int=3), UUID(int=4)},
+            set(),
+            set(),
+        ),
+        (
+            {
+                "annotators": [UUID(int=1)],
+                "validators": [UUID(int=2)],
+                "owners": {UUID(int=4)},
+            },
+            True,
+            {UUID(int=3)},
+            set(),
+            set(),
+        ),
+        (
+            {
+                "annotators": [UUID(int=1)],
+                "validators": [UUID(int=2)],
+                "owners": {UUID(int=4)},
+            },
+            False,
+            set(),
+            set(),
+            set(),
+        ),
+    ),
+)
+def test_update_jobs_users(
+    patch_data,
+    is_manual,
+    expected_deleted,
+    expected_annotators,
+    expected_validators,
+):
+    mock_session = MagicMock()
+    mock_job = MagicMock()
+    mock_job.annotators = [
+        User(user_id=UUID(int=1)),
+        User(user_id=UUID(int=2)),
+    ]
+    mock_job.validators = [
+        User(user_id=UUID(int=2)),
+        User(user_id=UUID(int=3)),
+    ]
+    mock_job.owners = [User(user_id=UUID(int=4))]
+
+    # Need to also mock the dependent functions
+    with patch(
+        "annotation.jobs.services.find_saved_users",
+        return_value=(set(), set()),
+    ), patch(
+        "annotation.jobs.services.find_users", return_value=([], [])
+    ), patch(
+        "annotation.jobs.services.check_annotators"
+    ), patch(
+        "annotation.jobs.services.check_validators"
+    ):
+        (
+            deleted_users,
+            annotators_to_save,
+            validators_to_save,
+        ) = update_jobs_users(mock_session, mock_job, patch_data, is_manual)
+        assert deleted_users == expected_deleted
+        assert annotators_to_save == expected_annotators
+        assert validators_to_save == expected_validators
