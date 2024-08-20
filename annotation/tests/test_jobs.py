@@ -17,6 +17,7 @@ from annotation.jobs.services import (
     collect_job_names,
     create_job,
     create_user,
+    delete_redundant_users,
     delete_tasks,
     find_saved_users,
     find_users,
@@ -818,3 +819,15 @@ def test_update_jobs_users(
         assert deleted_users == expected_deleted
         assert annotators_to_save == expected_annotators
         assert validators_to_save == expected_validators
+
+
+def test_delete_redudant_users():
+    mock_session = MagicMock()
+    mock_users = MagicMock()
+    mock_session.query().join.return_value = mock_users
+    deleted_uuid = UUID(int=1)
+    active_uuid = UUID(int=2)
+    mock_users.union().union().all.return_value = [User(user_id=active_uuid)]
+    with patch("annotation.jobs.services.User.user_id.in_") as mock_in:
+        delete_redundant_users(mock_session, {deleted_uuid, active_uuid})
+        mock_in.assert_called_once_with({deleted_uuid})
