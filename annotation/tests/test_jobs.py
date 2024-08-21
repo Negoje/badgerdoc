@@ -748,8 +748,8 @@ def test_find_saved_users(
     (
         (
             {
-                "annotators": [UUID(int=5)],
-                "validators": [UUID(int=6)],
+                "annotators": {UUID(int=5)},
+                "validators": {UUID(int=6)},
                 "owners": {UUID(int=7)},
             },
             True,
@@ -759,8 +759,8 @@ def test_find_saved_users(
         ),
         (
             {
-                "annotators": [UUID(int=1)],
-                "validators": [UUID(int=2)],
+                "annotators": {UUID(int=1)},
+                "validators": {UUID(int=2)},
                 "owners": {UUID(int=4)},
             },
             True,
@@ -770,8 +770,8 @@ def test_find_saved_users(
         ),
         (
             {
-                "annotators": [UUID(int=1)],
-                "validators": [UUID(int=2)],
+                "annotators": {UUID(int=1)},
+                "validators": {UUID(int=2)},
                 "owners": {UUID(int=4)},
             },
             False,
@@ -808,9 +808,9 @@ def test_update_jobs_users(
         "annotation.jobs.services.find_users", return_value=([], [])
     ), patch(
         "annotation.jobs.services.check_annotators"
-    ), patch(
+    ) as mock_check_annotators, patch(
         "annotation.jobs.services.check_validators"
-    ):
+    ) as mock_check_validators:
         (
             deleted_users,
             annotators_to_save,
@@ -819,6 +819,9 @@ def test_update_jobs_users(
         assert deleted_users == expected_deleted
         assert annotators_to_save == expected_annotators
         assert validators_to_save == expected_validators
+        if is_manual:
+            mock_check_annotators.assert_called_once()
+            mock_check_validators.assert_called_once()
 
 
 def test_delete_redudant_users():
