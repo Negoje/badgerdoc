@@ -29,6 +29,8 @@ from annotation.jobs.services import (
     get_tasks_to_delete,
     read_user,
     recalculate_file_pages,
+    remove_pages_in_work,
+    set_task_statuses,
     update_files,
     update_inner_job_status,
     update_job_categories,
@@ -81,17 +83,19 @@ def jobs_to_test_progress(job_annotators: Tuple[User], categories: Category):
             categories=[categories],
             deadline="2021-10-19T01:01:01",
             tenant="test",
+            extensive_coverage=1,
         ),
         Job(
             job_id=2,
             name="test2",
             callback_url="http://www.test.com",
             annotators=[job_annotators[0], job_annotators[1]],
-            validation_type=ValidationSchema.cross,
+            validation_type=ValidationSchema.validation_only,
             is_auto_distribution=False,
             categories=[categories],
             deadline="2021-10-19T01:01:01",
             tenant="test",
+            extensive_coverage=1,
         ),
     )
 
@@ -106,7 +110,7 @@ def tasks():
             job_id=1,
             user_id="7b626e68-857d-430a-b65b-bba0a40417ee",
             is_validation=False,
-            status=TaskStatusEnumSchema.in_progress,
+            status=TaskStatusEnumSchema.finished,
             deadline=None,
         ),
         ManualAnnotationTask(
@@ -116,7 +120,7 @@ def tasks():
             job_id=2,
             user_id="7b626e68-857d-430a-b65b-bba0a40417ee",
             is_validation=False,
-            status=TaskStatusEnumSchema.finished,
+            status=TaskStatusEnumSchema.in_progress,
             deadline=None,
         ),
         ManualAnnotationTask(
@@ -446,8 +450,6 @@ def test_create_user():
     assert result == expected_result
 
 
-# can not create Job with JobSchema
-@pytest.mark.skip(reason="Does not work")
 def test_create_job():
     mock_session = MagicMock()
     expected_result = Job(
@@ -468,14 +470,14 @@ def test_create_job():
             job_id=1,
             name="test1",
             callback_url="http://www.test.com",
-            annotators=[],
-            files=[uuid.UUID("82533770-a99e-4873-8b23-6bbda86b59ae")],
-            validators=[],
-            owners=[uuid.UUID("82533770-a99e-4873-8b23-6bbda86b59ae")],
+            annotators=set(),
+            files={1},
+            validators=set(),
+            owners={uuid.UUID("82533770-a99e-4873-8b23-6bbda86b59ae")},
             previous_jobs=[],
-            datasets=[1, 2],
+            datasets={1, 2},
             is_auto_distribution=False,
-            categories=[],
+            categories=set(),
             deadline=None,
             job_type=JobTypeEnumSchema.ExtractionJob,
             tenant="test",
@@ -834,3 +836,65 @@ def test_delete_redudant_users():
     with patch("annotation.jobs.services.User.user_id.in_") as mock_in:
         delete_redundant_users(mock_session, {deleted_uuid, active_uuid})
         mock_in.assert_called_once_with({deleted_uuid})
+
+
+def test_set_task_statuses_annotation_task_finished(
+    tasks: Tuple[ManualAnnotationTask, ...],
+    jobs_to_test_progress: Tuple[Job, ...],
+):
+    set_task_statuses(jobs_to_test_progress[0], (tasks[0], tasks[5]))
+    assert tasks[5].status == TaskStatusEnumSchema.ready
+    assert tasks[0].status == TaskStatusEnumSchema.finished
+
+
+def test_set_task_statuses_job_validaiton_only(
+    tasks: Tuple[ManualAnnotationTask, ...],
+    jobs_to_test_progress: Tuple[Job, ...],
+):
+    set_task_statuses(jobs_to_test_progress[1], (tasks[1], tasks[5]))
+    assert tasks[5].status == TaskStatusEnumSchema.ready
+
+
+def test_set_task_statuses_pages_not_annotated(
+    tasks: Tuple[ManualAnnotationTask, ...],
+    jobs_to_test_progress: Tuple[Job, ...],
+):
+    tasks[5].pages = [1, 2]
+    set_task_statuses(jobs_to_test_progress[0], (tasks[0], tasks[5]))
+    assert tasks[5].status == TaskStatusEnumSchema.pending
+
+
+@pytest.mark.parametrize(
+    "tasks, pages_in_work, expected_tasks",
+    [
+        (
+            [
+                {"file_id": 1, "pages": [1, 2, 3, 4, 5], "is_urgent": True},
+                {"file_id": 2, "pages": [6, 7, 8, 9, 10], "is_urgent": False},
+                {"file_id": 1, "pages": [11, 12, 13], "is_urgent": True},
+            ],
+            [
+                {"file_id": 1, "pages_number": [1, 2, 3]},
+                {"file_id": 2, "pages_number": [7, 8]},
+            ],
+            [
+                {"file_id": 1, "pages": [4, 5], "is_urgent": True},
+                {"file_id": 2, "pages": [6, 9, 10], "is_urgent": False},
+                {"file_id": 1, "pages": [11, 12, 13], "is_urgent": True},
+            ],
+        ),
+        (
+            [{"file_id": 3, "pages": [14, 15], "is_urgent": True}],
+            [{"file_id": 1, "pages_number": [1, 2, 3]}],
+            [{"file_id": 3, "pages": [14, 15], "is_urgent": True}],
+        ),
+        (
+            [{"file_id": 1, "pages": [1, 2, 3], "is_urgent": True}],
+            [{"file_id": 1, "pages_number": [1, 2, 3]}],
+            [],
+        ),
+    ],
+)
+def test_remove_pages_in_work(tasks, pages_in_work, expected_tasks):
+    remove_pages_in_work(tasks, pages_in_work)
+    assert tasks == expected_tasks

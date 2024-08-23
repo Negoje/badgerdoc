@@ -453,7 +453,19 @@ def create_user(db: Session, user_id: UUID):
 
 
 def create_job(db: Session, job_info: JobInfoSchema):
-    job_info = Job(**job_info.dict())
+    job_info = job_info.dict()
+    for key, value in job_info.items():
+        if (
+            key == "annotators"
+            or key == "validators"
+            or key == "owners"
+            or key == "files"
+            or key == "tasks"
+            or key == "categories"
+        ):
+            job_info[key] = list(value)
+    print(job_info)
+    job_info = Job(**job_info)
     db.add(job_info)
     db.commit()
     return job_info
